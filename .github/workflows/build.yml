@@ -1,0 +1,151 @@
+name: Build
+
+# Builds Mulhimfy/messagesrecovery (private; read-only deploy key, credentials not kept).
+# Every output (analyzer and test reports, the APKs, the Play bundle, emulator screenshots and
+# logs) is sealed with MR_ARTIFACT_KEY before upload.
+on:
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: Branch, tag or full commit of Mulhimfy/messagesrecovery
+        default: main
+      smoke:
+        description: Drive the app on an emulator against a stand-in chat app
+        type: boolean
+        default: true
+      api:
+        description: Emulator API level for the smoke test
+        default: '34'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: build-${{ inputs.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 75
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          repository: Mulhimfy/messagesrecovery
+          ref: ${{ inputs.ref }}
+          ssh-key: ${{ secrets.MR_DEPLOY_KEY }}
+          persist-credentials: false
+          path: app
+      - name: Source
+        working-directory: app
+        run: git log -1 --format='%h %cd' --date=iso
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: 3.47.8
+          channel: stable
+          cache: true
+      - name: Analyze and test
+        working-directory: app
+        run: |
+          mkdir -p ../out
+          flutter pub get > ../out/pub.txt 2>&1
+          if flutter analyze --no-pub > ../out/analyze.txt 2>&1; then echo "analyze: clean"; else echo "analyze: issues"; fi
+          if flutter test --no-pub test/ > ../out/test.txt 2>&1; then echo "tests: passed"; else echo "tests: FAILED"; fi
+          tail -1 ../out/test.txt | grep -oE '\+[0-9]+( -[0-9]+)?' || true
+      - name: Signing
+        working-directory: app/android
+        env:
+          KS: ${{ secrets.MR_KEYSTORE_B64 }}
+          PW: ${{ secrets.MR_KEYSTORE_PASSWORD }}
+        run: |
+          printf '%s' "$KS" | base64 -d > upload.p12
+          printf 'storeFile=upload.p12\nstorePassword=%s\nkeyPassword=%s\nkeyAlias=messagesrecovery\nstoreType=pkcs12\n' "$PW" "$PW" > key.properties
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          cache-read-only: false
+      - name: Release builds
+        working-directory: app
+        run: |
+          if flutter build apk --release --split-per-abi --no-pub > ../out/build.txt 2>&1; then
+            cp build/app/outputs/flutter-apk/app-arm64-v8a-release.apk ../out/MessagesRecovery.apk
+            cp build/app/outputs/flutter-apk/app-armeabi-v7a-release.apk ../out/MessagesRecovery-armv7.apk
+            cp build/app/outputs/flutter-apk/app-x86_64-release.apk ../out/smoke.apk
+            ls -la ../out/*.apk | awk '{print "apk bytes:", $5}'
+          else
+            echo "build: FAILED"; touch ../out/BUILD_FAILED
+            grep -E "^e: |error:|FAILURE|What went wrong" -A4 ../out/build.txt | head -120 > ../out/build_errors.txt || true
+          fi
+          if [ ! -e ../out/BUILD_FAILED ]; then
+            if flutter build appbundle --release --no-pub >> ../out/build.txt 2>&1; then
+              cp build/app/outputs/bundle/release/app-release.aab ../out/MessagesRecovery.aab
+              ls -la ../out/MessagesRecovery.aab | awk '{print "aab bytes:", $5}'
+            else
+              echo "bundle: FAILED"
+            fi
+          fi
+      - name: Stand-in chat app for the emulator test
+        if: inputs.smoke && hashFiles('out/smoke.apk') != ''
+        working-directory: app/android
+        run: |
+          if MR_FAKECHAT=1 ./gradlew :fakechat:assembleDebug > ../../out/fakechat_build.txt 2>&1; then
+            cp "$(find .. -name 'fakechat-debug.apk' | head -1)" ../../out/fakechat.apk
+            echo "stand-in chat app: built"
+          else
+            echo "stand-in chat app: FAILED"
+            tail -40 ../../out/fakechat_build.txt > ../../out/fakechat_errors.txt
+          fi
+      - name: Remove signing files
+        if: always()
+        run: rm -f app/android/upload.p12 app/android/key.properties
+      - name: Permissions in the APK
+        if: hashFiles('out/MessagesRecovery.apk') != ''
+        run: |
+          AAPT=$(ls "$ANDROID_HOME"/build-tools/*/aapt2 | sort -V | tail -1)
+          "$AAPT" dump permissions out/MessagesRecovery.apk | tee out/permissions.txt
+          "$AAPT" dump badging out/MessagesRecovery.apk | grep -E "^(package|sdkVersion|targetSdkVersion|application-label)" | tee out/badging.txt
+      - name: Enable KVM
+        if: inputs.smoke
+        run: |
+          sudo rm -rf /usr/share/dotnet /opt/ghc /usr/local/share/boost /usr/share/swift /usr/local/.ghcup || true
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+      - name: Emulator smoke test
+        if: inputs.smoke && hashFiles('out/smoke.apk') != '' && hashFiles('out/fakechat.apk') != ''
+        timeout-minutes: 35
+        continue-on-error: true
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: ${{ inputs.api }}
+          target: google_apis
+          arch: x86_64
+          profile: pixel_6
+          ram-size: 6144M
+          heap-size: 1024M
+          disable-animations: true
+          emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -no-snapshot
+          script: bash app/tool/smoke/run.sh out/smoke.apk out/fakechat.apk out/smoke > /dev/null 2>&1
+      - name: Seal
+        if: always()
+        env:
+          K: ${{ secrets.MR_ARTIFACT_KEY }}
+        run: |
+          rm -f app/android/upload.p12 app/android/key.properties out/smoke.apk out/fakechat.apk
+          mkdir -p out
+          grep -cE "^PASS" out/smoke/steps.txt 2>/dev/null | awk '{print "smoke passed:", $1}' || true
+          grep -cE "^FAIL" out/smoke/steps.txt 2>/dev/null | awk '{print "smoke failed:", $1}' || true
+          tar czf bundle.tgz -C out .
+          openssl enc -aes-256-cbc -pbkdf2 -iter 200000 -salt -pass env:K -in bundle.tgz -out sealed.bin
+          rm -f bundle.tgz
+          ls -la sealed.bin | awk '{print "sealed bytes:", $5}'
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: sealed
+          path: sealed.bin
+          retention-days: 5
+          if-no-files-found: error
