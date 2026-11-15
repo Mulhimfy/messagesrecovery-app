@@ -1,0 +1,23 @@
+:root{--bg:#0B0A10;--card:#15131D;--ink:#F2EFE6;--ink2:#B9B4C6;--ink3:#7E7990;--mark:#D8F24A;--line:#2A2735}
+@media (prefers-color-scheme:light){:root{--bg:#F4F1EA;--card:#FFFDF7;--ink:#17151F;--ink2:#4A4658;--ink3:#7B7788;--mark:#D8F24A;--line:#DDD8CB}}
+*{box-sizing:border-box}
+html{-webkit-text-size-adjust:100%}
+body{margin:0;background:var(--bg);color:var(--ink);font:400 17px/1.6 "Geist",system-ui,-apple-system,"Segoe UI",Roboto,sans-serif}
+main{max-width:680px;margin:0 auto;padding:56px 22px 72px}
+.icon{width:76px;height:76px;border-radius:22px 22px 22px 7px;display:block}
+.over{font:500 12px/1.4 "Geist Mono",ui-monospace,monospace;letter-spacing:.08em;text-transform:uppercase;color:var(--ink3);margin:28px 0 10px}
+h1{font:400 46px/1.08 "Instrument Serif",Georgia,serif;margin:0 0 18px;letter-spacing:-.01em}
+h1 em{font-style:italic;color:#17151F;background:var(--mark);padding:0 .14em;border-radius:3px 9px 4px 8px;box-decoration-break:clone;-webkit-box-decoration-break:clone}
+h2{font:400 27px/1.2 "Instrument Serif",Georgia,serif;margin:40px 0 10px}
+p,li{color:var(--ink2)}
+b,strong{color:var(--ink);font-weight:600}
+ul{padding-left:20px;margin:10px 0}
+li{margin:6px 0}
+a{color:var(--ink);text-decoration:underline;text-decoration-color:var(--mark);text-decoration-thickness:2px;text-underline-offset:3px}
+code{font:500 14px "Geist Mono",ui-monospace,monospace;background:var(--card);border:1px solid var(--line);padding:1px 6px;border-radius:6px 6px 6px 2px;color:var(--ink)}
+.card{background:var(--card);border:1px dashed var(--line);border-radius:20px 20px 20px 6px;padding:18px 20px;margin:22px 0}
+.card p{margin:6px 0}
+.btn{display:inline-block;margin-top:8px;background:var(--mark);color:#17151F;font-weight:600;text-decoration:none;padding:13px 22px;border-radius:18px 18px 18px 6px}
+footer{margin-top:56px;padding-top:20px;border-top:1px solid var(--line);font-size:14px;color:var(--ink3)}
+footer a{color:var(--ink2)}
+@media (max-width:480px){h1{font-size:38px}main{padding-top:40px}}
